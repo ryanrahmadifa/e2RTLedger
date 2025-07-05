@@ -116,22 +116,7 @@ Automatically classifies transactions into:
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    EmailInbox["📧 Email Inbox (IMAP)"]
-    Backend["🐍 FastAPI Backend"]
-    Redis["🟠 Redis Pub/Sub"]
-    WebSocket["🟢 Node.js WebSocket Server"]
-    Frontend["⚛️ Next.js Frontend"]
-    Database["🐘 PostgreSQL Database"]
-
-    EmailInbox -->|Polls and fetches emails| Backend
-    Backend -->|Classifies emails via AI (OpenRouter)| Backend
-    Backend -->|Stores structured ledger entries| Database
-    Backend -->|Publishes ledger updates| Redis
-    Redis --> WebSocket
-    WebSocket -->|Broadcasts live ledger updates| Frontend
-```
+![Architecture Diagram](./images/Ryan_E2LEDGER_INFRASTRUCTURE.png)
 
 ## Development
 
