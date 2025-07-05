@@ -1,0 +1,64 @@
+services:
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: ledger
+      POSTGRES_PASSWORD: ledgerpw
+      POSTGRES_DB: ledgerdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  fastapi:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - postgres
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+
+  websocket:
+    build: ./websocket
+    depends_on:
+      - redis
+    ports:
+      - "3001:3001"
+    environment:
+      - REDIS_HOST=redis
+
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    depends_on:
+      - websocket
+
+  email_listener:
+    build: ./backend
+    command: ["python", "fastapi_app/email_listener.py"]
+    env_file:
+      - .env
+    depends_on:
+      fastapi:
+        condition: service_healthy
+
+volumes:
+  pgdata:

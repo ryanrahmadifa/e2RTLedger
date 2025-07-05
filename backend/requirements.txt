@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+pydantic
+sqlalchemy
+psycopg2-binary
+redis
+requests
+python-dotenv
+email-validator
+imap-tools
+pillow
+python-multipart
+pymupdf
