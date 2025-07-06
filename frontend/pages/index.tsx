@@ -1,4 +1,5 @@
 import LedgerTable from "../components/LedgerTable";
+import LiveConsole from "../components/LiveConsole";
 import Image from "next/image";
 import Head from "next/head";
 
@@ -13,6 +14,7 @@ export default function Home() {
         <section className="mt-10 bg-gray-50 p-6 rounded shadow-sm text-gray-700 text-sm">
         <Image src="/earlybirdai.png" alt="Earlybird AI" width={120} height={60} />
         <LedgerTable />
+        <LiveConsole /> 
           <h2 className="text-lg font-semibold mb-3">Proof of Concept Explanation</h2>
           <p className="mb-2">
             This Live Ledger POC is built with a modern, full-stack architecture designed to process emails in real-time, classify expense data, and display it dynamically.

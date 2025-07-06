@@ -22,6 +22,11 @@ subscriber.subscribe("ledger_updates", (message) => {
   io.emit("ledger_update", JSON.parse(message));
 });
 
+subscriber.subscribe("log_stream", (message) => {
+  io.emit("log_stream", JSON.parse(message));
+});
+
+
 io.on("connection", (socket) => {
   console.log("User connected to WebSocket");
 });

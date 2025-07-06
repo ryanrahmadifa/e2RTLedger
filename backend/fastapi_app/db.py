@@ -7,9 +7,6 @@ import os
 import logging
 
 # Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://ledger:ledgerpw@localhost:5432/ledgerdb")
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -65,13 +62,13 @@ def save_entry(data):
     """
     db = SessionLocal()
     try:
-        logger.info("Attempting to save entry: %s", data)
+        logging.info("Attempting to save entry: %s", data)
 
         # Print all existing rows
         existing_rows = db.query(LedgerEntry).all()
-        logger.info("Current rows in DB (%d):", len(existing_rows))
+        logging.info("Current rows in DB (%d):", len(existing_rows))
         for row in existing_rows:
-            logger.info("Row ID %s | Fingerprint: %s | Vendor: %s | Amount: %.2f | Date: %s",
+            logging.info("Row ID %s | Fingerprint: %s | Vendor: %s | Amount: %.2f | Date: %s",
                         row.id, row.fingerprint, row.vendor, row.amount, row.date)
 
         # Attempt to insert
@@ -88,13 +85,13 @@ def save_entry(data):
         )
         db.add(entry)
         db.commit()
-        logger.info("Entry committed successfully.")
+        logging.info("Entry committed successfully.")
     except IntegrityError:
         db.rollback()
-        logger.warning("Duplicate fingerprint detected — skipping entry: %s", data["fingerprint"])
+        logging.warning("Duplicate fingerprint detected — skipping entry: %s", data["fingerprint"])
     except Exception as e:
         db.rollback()
-        logger.exception("Failed to save entry due to exception.")
+        logging.exception("Failed to save entry due to exception.")
         raise
     finally:
         db.close()

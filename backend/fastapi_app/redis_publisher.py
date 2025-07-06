@@ -3,6 +3,7 @@ import re
 import os
 import json
 import hashlib
+import logging
 
 redis_conn = redis.Redis(host=os.getenv("REDIS_HOST", "localhost"), port=6379, db=0)
 
@@ -46,3 +47,8 @@ def compute_fingerprint(text):
     norm_body = normalize_text(text)
     combined = (norm_body).encode("utf-8")
     return hashlib.sha256(combined).hexdigest()
+
+class RedisLogHandler(logging.Handler):
+    def emit(self, record):
+        log_entry = self.format(record)
+        redis_conn.publish("log_stream", json.dumps({"log": log_entry}))
