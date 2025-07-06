@@ -7,22 +7,23 @@ import logging
 
 redis_conn = redis.Redis(host=os.getenv("REDIS_HOST", "localhost"), port=6379, db=0)
 
-def publish_entry(data):
+def publish_entry_once(data):
     """
-    Publish a new entry to the Redis channel.
+    Publish to Redis only if this fingerprint has not been published yet.
+    """
+    fingerprint = data.get("fingerprint")
+    if not fingerprint:
+        logging.warning("No fingerprint in data — cannot deduplicate")
+        return
 
-    Args:
-        data (dict): A dictionary containing the entry details. Must include:
-            - text (str): Description of the transaction.
-            - date (str): Date of the transaction in YYYY-MM-DD format.
-            - amount (float): Amount of the transaction.
-            - currency (str): Currency of the transaction (e.g., USD, SGD).
-            - vendor (str): Name of the vendor or party involved in the transaction.
-            - ttype (str): Type of transaction, either "Debit" or "Credit".
-            - referenceid (str): Unique reference ID for the transaction.
-            - label (str): Category of the transaction (e.g., Meals & Entertainment, Transport).
-    """
-    redis_conn.publish("ledger_updates", json.dumps(data))
+    redis_key = f"published:{fingerprint}"
+
+    # Set only if not exists (NX) — expire in 1 hour (or longer if needed)
+    if redis_conn.set(redis_key, "1", nx=True, ex=3600):
+        redis_conn.publish("ledger_updates", json.dumps(data))
+        logging.info(f"Published new ledger update for {fingerprint[:8]}")
+    else:
+        logging.info(f"Skipped duplicate publish for {fingerprint[:8]}")
 
 def normalize_text(text):
     """
@@ -34,19 +35,6 @@ def normalize_text(text):
         str: The normalized text, stripped of leading/trailing whitespace and converted to lowercase.
     """
     return re.sub(r"\s+", " ", text.strip().lower())
-
-def compute_fingerprint(text):
-    """
-    Compute a SHA-256 fingerprint for the given text.
-
-    Args:
-        text (str): The input text to compute the fingerprint for.
-    Returns:
-        str: The SHA-256 hash of the normalized text, represented as a hexadecimal string.
-    """
-    norm_body = normalize_text(text)
-    combined = (norm_body).encode("utf-8")
-    return hashlib.sha256(combined).hexdigest()
 
 class RedisLogHandler(logging.Handler):
     def emit(self, record):

@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, File, UploadFile, BackgroundTasks
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
-from .nlp import classify_email
+from .nlp import classify_email_agentic
 from .db import save_entry
 from .redis_publisher import *
 import traceback
@@ -10,6 +10,8 @@ from contextlib import asynccontextmanager
 ocr_results = {}
 
 REDIS_PROCESSED_SET = "processed_fingerprints"
+
+import time
 
 class EmailText(BaseModel):
     text: str = Field(..., min_length=1)
@@ -43,7 +45,7 @@ async def lifespan(app: FastAPI):
     formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
     handler.setFormatter(formatter)
     logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
 
     for name in ["uvicorn", "email_listener", "uvicorn.access", "uvicorn.error"]:
         logger = logging.getLogger(name)
@@ -134,42 +136,44 @@ def perform_ocr(file_bytes: bytes, filename: str) -> str:
 def health():
     return {"status": "ok"}
 
-@app.post("/redis_check/")
-def redis_check(data: FingerprintCheck):
-    """
-    Check if a fingerprint already exists in Redis
-    
-    Args:
-        data (FingerprintCheck): The fingerprint to check, provided as a JSON object with a single field `fingerprint`.
-    Returns:
-        dict: A dictionary containing a boolean `exists` indicating whether the fingerprint is already processed.
-    """
-    try:
-        exists = redis_conn.sismember(REDIS_PROCESSED_SET, data.fingerprint)
-        return {"exists": bool(exists)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+CLAIM_TTL_SECONDS = 600
+CACHE_TTL_SECONDS = 7 * 86400
 
-@app.post("/redis_publish/")
-def redis_publish(data: FingerprintCheck):
-    """
-    Publish a fingerprint to Redis processed set.
+class ClaimRequest(BaseModel):
+    fingerprint: str
 
-    Args:
-        data (FingerprintCheck): The fingerprint to publish, provided as a JSON object with a single field `fingerprint`.
-    Returns:
-        dict: A dictionary containing the status of the operation.
-    """
-    try:
-        added = redis_conn.sadd(REDIS_PROCESSED_SET, data.fingerprint)
-        if added == 0:
-            raise HTTPException(status_code=409, detail="Duplicate email detected")
-        return {"status": "ok"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+class CacheRequest(BaseModel):
+    fingerprint: str
+    text: str
+
+@app.post("/redis_claim/")
+async def redis_claim(req: ClaimRequest):
+    claim_key = f"ocr:claim:{req.fingerprint}"
+    cache_key = f"ocr:text:{req.fingerprint}"
+
+    cached_text = redis_conn.get(cache_key)
+    if cached_text is not None:
+        return {"claimed": False, "cached_text": cached_text}
+
+    claimed = redis_conn.set(claim_key, "claimed", nx=True, ex=CLAIM_TTL_SECONDS)
+    if not claimed:
+        return {"claimed": False, "cached_text": ""}
+
+    return {"claimed": True, "cached_text": ""}
+
+@app.post("/redis_cache/")
+async def redis_cache(req: CacheRequest):
+    claim_key = f"ocr:claim:{req.fingerprint}"
+    cache_key = f"ocr:text:{req.fingerprint}"
+
+    redis_conn.set(cache_key, req.text, ex=CACHE_TTL_SECONDS)
+
+    redis_conn.delete(claim_key)
+
+    return {"success": True}
 
 @app.post("/ocr_document/")
-def ocr_document(file: UploadFile = File(...), background_tasks: BackgroundTasks = BackgroundTasks()):
+async def ocr_document(file: UploadFile = File(...), background_tasks: BackgroundTasks = BackgroundTasks()):
     """
     Perform OCR on an uploaded document file asynchronously.
 
@@ -199,7 +203,7 @@ def ocr_document(file: UploadFile = File(...), background_tasks: BackgroundTasks
         raise HTTPException(status_code=500, detail=f"OCR processing failed: {e}")
     
 @app.get("/ocr_result/{task_id}")
-def get_ocr_result(task_id: str):
+async def get_ocr_result(task_id: str):
     """
     Get the OCR result for a specific task ID.
 
@@ -216,52 +220,23 @@ def get_ocr_result(task_id: str):
         raise HTTPException(status_code=404, detail="Task ID not found")
     return result
 
-
 @app.post("/classify/", response_model=ClassifiedResult)
-def classify(data: EmailText):
+async def classify(data: EmailText):
     """
     Classify the email content and extract relevant financial information.
-
-    Args:
-        data (EmailText): The email content to classify, provided as a JSON object with a single field `text`.
-    Returns:
-        ClassifiedResult: A structured response containing the classified information with keys:
-            - text: Short description of the transaction.
-            - date: Date of the transaction in "YYYY-MM-DD" format.
-            - amount: Amount of the transaction as a float.
-            - currency: 3-letter ISO currency code (e.g., USD, SGD).
-            - vendor: Name of the merchant or party involved in the transaction.
-            - ttype: Type of transaction, either "Debit" or "Credit".
-            - referenceid: Transaction ID or Reference ID.
-            - label: Category of the transaction (e.g., Meals & Entertainment, Transport).
-    Raises:
-        HTTPException: If the input data is invalid, if a duplicate email is detected, 
-        or if an error occurs during processing.
-    """
+    """   
     try:
-        # First, check if we've already processed this email
-        exists = redis_conn.sismember(REDIS_PROCESSED_SET, data.fingerprint)
-        if exists:
-            raise HTTPException(status_code=409, detail="Email already processed")
-        
-        # Add to processed set immediately to prevent race conditions
-        redis_conn.sadd(REDIS_PROCESSED_SET, data.fingerprint)
-        
-        # Process the email
-        result = classify_email(data.text, data.date)
+        result = classify_email_agentic(data.text, data.date)
         validated = ClassifiedResult(**result)
         entry_with_fingerprint = validated.model_dump()
         entry_with_fingerprint["fingerprint"] = data.fingerprint
 
         save_entry(entry_with_fingerprint)
-        publish_entry(entry_with_fingerprint)
+        publish_entry_once(entry_with_fingerprint)
         
         return entry_with_fingerprint
-    
-    except HTTPException:
-        raise
-
-    except Exception as e:
+        
+    except Exception as classification_error:
         redis_conn.srem(REDIS_PROCESSED_SET, data.fingerprint)
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(classification_error))

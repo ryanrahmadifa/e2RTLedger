@@ -16,16 +16,35 @@ const subscriber = redis.createClient({
   }
 });
 
+const seenFingerprints = new Set();
 
-subscriber.connect().catch(console.error);
-subscriber.subscribe("ledger_updates", (message) => {
-  io.emit("ledger_update", JSON.parse(message));
-});
+(async () => {
+  await subscriber.connect();
 
-subscriber.subscribe("log_stream", (message) => {
-  io.emit("log_stream", JSON.parse(message));
-});
+  await subscriber.subscribe("ledger_updates", (message) => {
+    try {
+      const entry = JSON.parse(message);
 
+      if (seenFingerprints.has(entry.fingerprint)) {
+        return;
+      }
+      seenFingerprints.add(entry.fingerprint);
+
+      io.emit("ledger_update", entry);
+
+    } catch (e) {
+      console.error("Failed to parse ledger_updates message", e);
+    }
+  });
+
+  await subscriber.subscribe("log_stream", (message) => {
+    try {
+      io.emit("log_stream", JSON.parse(message));
+    } catch (e) {
+      console.error("Failed to parse log_stream message", e);
+    }
+  });
+})();
 
 io.on("connection", (socket) => {
   console.log("User connected to WebSocket");

@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Search, Filter, ArrowUpDown, TrendingUp, TrendingDown } from "lucide-react";
 import { io } from "socket.io-client";
 
-
 export type LedgerEntry = {
   text: string;
   date: string;
@@ -26,10 +25,23 @@ export default function LedgerTable() {
     const socket = io(process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3001");
 
     const handleUpdate = (entry: LedgerEntry) => {
-      if (!entry.fingerprint) return;
+      console.log("Received entry:", {
+        fingerprint: entry.fingerprint,
+        referenceid: entry.referenceid,
+        vendor: entry.vendor,
+        amount: entry.amount,
+        date: entry.date
+      });
+
+      if (!entry.fingerprint) {
+        console.log("Entry rejected: Missing fingerprint");
+        return;
+      }
 
       setLedger((prev) => {
         const fingerprint = entry.fingerprint.trim();
+        
+        // Only check for duplicates by fingerprint
         const existsByFingerprint = prev.some(e => e.fingerprint?.trim() === fingerprint);
         
         if (existsByFingerprint) {
@@ -37,18 +49,8 @@ export default function LedgerTable() {
           return prev;
         }
         
-        const existsByContent = prev.some(e => 
-          e.vendor === entry.vendor &&
-          e.amount === entry.amount &&
-          e.date === entry.date &&
-          e.referenceid === entry.referenceid
-        );
-        
-        if (existsByContent) {
-          console.log("Duplicate by content for:", entry.vendor, entry.amount);
-          return prev;
-        }
-        
+        // If no duplicates found, add the entry
+        console.log("Adding new entry:", fingerprint);
         return [entry, ...prev];
       });
     };
@@ -62,7 +64,6 @@ export default function LedgerTable() {
       socket.disconnect();
     };
   }, []);
-
 
   const filteredLedger = ledger
     .filter((entry) =>
@@ -86,7 +87,7 @@ export default function LedgerTable() {
 
   const formatAmount = (amount: number, currency: string) => {
     const safeAmount = typeof amount === "number" && !isNaN(amount) ? amount : 0;
-    const safeCurrency = /^[A-Z]{3}$/.test(currency || "") ? currency : "SGD";
+    const safeCurrency = /^[A-Z]{3}$/.test(currency || "") ? currency : "USD";
 
     const formattedNumber = new Intl.NumberFormat('en-US', {
       minimumFractionDigits: 2,
@@ -121,7 +122,6 @@ export default function LedgerTable() {
     acc[entry.currency] = (acc[entry.currency] || 0) + entry.amount;
     return acc;
   }, {} as Record<string, number>);
-
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -198,6 +198,15 @@ export default function LedgerTable() {
           </div>
         </div>
 
+        {/* Debug Info */}
+        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-6">
+          <p className="text-sm text-yellow-800">
+            <strong>Debug:</strong> Total entries in ledger: {ledger.length} | 
+            Filtered entries: {filteredLedger.length} | 
+            Unique fingerprints: {new Set(ledger.map(e => e.fingerprint)).size}
+          </p>
+        </div>
+
         {/* Table */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
           {filteredLedger.length === 0 ? (
@@ -224,7 +233,7 @@ export default function LedgerTable() {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {filteredLedger.map((entry, i) => (
-                    <tr key={entry.referenceid} className="hover:bg-gray-50/50 transition-colors">
+                    <tr key={entry.fingerprint} className="hover:bg-gray-50/50 transition-colors">
                       <td className="py-4 px-6 text-sm text-gray-900 font-medium">
                         {formatDate(entry.date)}
                       </td>
@@ -271,14 +280,14 @@ export default function LedgerTable() {
                 <p className="text-gray-600">Showing {filteredLedger.length} transaction{filteredLedger.length !== 1 ? 's' : ''}</p>
               </div>
               <div className="text-right">
-                <p className="text-sm text-gray-600">Total Amount</p>
-                <p className="text-2xl font-bold text-gray-900">
+                <p className="text-sm text-gray-600 mb-2">Total Amount</p>
+                <div className="space-y-1">
                   {Object.entries(totalPerCurrency).map(([currency, total]) => (
-                    <p key={currency} className="text-sm text-gray-700">
-                      Total in {currency}: <strong>{formatAmount(total as number, currency)}</strong>
-                    </p>
+                    <div key={currency} className="text-lg font-bold text-gray-900">
+                      {formatAmount(total as number, currency)}
+                    </div>
                   ))}
-                </p>
+                </div>
               </div>
             </div>
           </div>

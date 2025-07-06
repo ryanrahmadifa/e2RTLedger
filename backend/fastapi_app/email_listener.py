@@ -6,6 +6,8 @@ import time
 import requests
 import os
 import hashlib
+import unicodedata
+import re
 import tempfile
 import logging
 import threading
@@ -20,7 +22,8 @@ EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 FASTAPI_CLASSIFY_URL = os.getenv("FASTAPI_CLASSIFY_URL", "http://fastapi:8000/classify/")
 FASTAPI_OCR_URL = os.getenv("FASTAPI_OCR_URL", "http://fastapi:8000/ocr_result/")
 FASTAPI_OCR_SUBMIT_URL = os.getenv("FASTAPI_OCR_SUBMIT_URL", "http://fastapi:8000/ocr_document/")
-FASTAPI_REDIS_CHECK_URL = os.getenv("FASTAPI_REDIS_CHECK_URL", "http://fastapi:8000/redis_check/")
+FASTAPI_REDIS_CACHE_URL = os.getenv("FASTAPI_REDIS_CACHE_URL", "http://fastapi:8000/redis_cache/")
+FASTAPI_REDIS_CLAIM_URL = os.getenv("FASTAPI_REDIS_CHECK_URL", "http://fastapi:8000/redis_claim/")
 
 processing_emails = set()
 processing_lock = threading.Lock()
@@ -50,39 +53,36 @@ def decode_str(s) -> str:
     decoded, enc = decode_header(s)[0]
     return decoded.decode(enc or "utf-8") if isinstance(decoded, bytes) else decoded
 
+def normalize_text(text: str) -> str:
+    if not text:
+        return ""
+    text = text.strip().lower()  # lowercase and trim
+    text = unicodedata.normalize("NFC", text)  # normalize unicode
+    text = re.sub(r"\s+", " ", text)  # collapse all whitespace runs to single space
+    return text
+
 def compute_fingerprint(*args) -> str:
     """
     Compute a SHA-256 fingerprint for the given input strings.
 
     Args:
-        *args: Variable length argument list of strings to include in the fingerprint.
+        *args: Variable length argument list of strings or bytes to include in the fingerprint.
+
     Returns:
         str: The computed SHA-256 fingerprint as a hexadecimal string.
     """
-    combined = "".join((a or "").strip() for a in args).encode("utf-8")
+    normalized_parts = []
+    for a in args:
+        if isinstance(a, bytes):
+            s = a.decode("utf-8", errors="ignore")
+        else:
+            s = a or ""
+
+        normalized = normalize_text(s)
+        normalized_parts.append(normalized)
+
+    combined = "\x1f".join(normalized_parts).encode("utf-8")
     return hashlib.sha256(combined).hexdigest()
-
-def is_already_processing_or_processed(fingerprint: str) -> bool:
-    """
-    Check if an email is already being processed or has been processed.
-
-    Args:
-        fingerprint (str): The SHA-256 fingerprint of the email.
-    Returns:
-        bool: True if the email is already being processed or has been processed, False otherwise.
-    """
-    with processing_lock:
-        if fingerprint in processing_emails:
-            return True
-        try:
-            resp = requests.post(FASTAPI_REDIS_CHECK_URL, json={"fingerprint": fingerprint})
-            if resp.ok and resp.json().get("exists", False):
-                return True
-        except Exception as e:
-            logging.error(f"Redis check failed: {e}")
-            return True
-        processing_emails.add(fingerprint)
-        return False
 
 def remove_processing_mark(fingerprint: str) -> None:
     """
@@ -113,48 +113,49 @@ def extract_attachments(msg: email.message.EmailMessage) -> list[dict]:
     return attachments
 
 def submit_ocr(attachment: dict) -> str:
-    """
-    Submit an attachment for OCR processing.
-    This function uploads the attachment to a FastAPI endpoint for OCR processing,
-    waits for the result for 60 seconds, and returns the OCR text.
-
-    Args:
-        attachment (dict): A dictionary containing the attachment filename and content.
-    Returns:
-        str: The OCR result text if successful, or an empty string if failed.
-    """
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(attachment["filename"])[1]) as tmpf:
-            tmpf.write(attachment["content"])
-            tmpf.flush()
-        with open(tmpf.name, "rb") as f:
-            files = {"file": (attachment["filename"], f)}
-            submit_resp = requests.post(FASTAPI_OCR_SUBMIT_URL, files=files)
-        os.unlink(tmpf.name)
-
-        if not submit_resp.ok:
-            logging.warning(f"OCR submission failed for {attachment['filename']}: {submit_resp.text}")
-            return ""
-
-        task_id = submit_resp.json().get("task_id")
-        logging.info(f"OCR task submitted for {attachment['filename']} (Task ID: {task_id})")
-
-        for _ in range(60):
-            result_resp = requests.get(f"{FASTAPI_OCR_URL}{task_id}")
-            if result_resp.ok:
-                status = result_resp.json().get("status")
-                if status == "completed":
-                    return result_resp.json().get("text", "")
-                elif status == "failed":
-                    logging.warning(f"OCR failed for {attachment['filename']}")
-                    return ""
-            time.sleep(1)
-        logging.warning(f"OCR timed out for {attachment['filename']}")
+    fingerprint = compute_fingerprint(attachment["content"])
+    claim_resp = requests.post(FASTAPI_REDIS_CLAIM_URL, json={"fingerprint": fingerprint})
+    if claim_resp.status_code != 200:
+        logging.warning(f"Failed to claim fingerprint {fingerprint}")
         return ""
 
-    except Exception as e:
-        logging.error(f"OCR processing error for {attachment['filename']}: {e}")
+    claim_data = claim_resp.json()
+    if not claim_data.get("claimed"):
+        logging.info(f"Fingerprint {fingerprint} already claimed or processed.")
+        cached_text = claim_data.get("cached_text", "")
+        return cached_text
+
+    files = {"file": (attachment["filename"], attachment["content"])}
+    submit_resp = requests.post(FASTAPI_OCR_SUBMIT_URL, files=files)
+    if not submit_resp.ok:
+        logging.warning(f"OCR submission failed for {attachment['filename']}: {submit_resp.text}")
+        # Release claim? (Optional depending on your Redis logic)
         return ""
+
+    task_id = submit_resp.json().get("task_id")
+    logging.info(f"OCR task submitted for {attachment['filename']} (Task ID: {task_id})")
+
+    for _ in range(60):
+        result_resp = requests.get(f"{FASTAPI_OCR_URL}{task_id}")
+        if result_resp.ok:
+            status = result_resp.json().get("status")
+            if status == "completed":
+                text = result_resp.json().get("text", "")
+                # Cache the OCR result in Redis so others don't reprocess
+                cache_resp = requests.post(FASTAPI_REDIS_CACHE_URL, json={"fingerprint": fingerprint, "text": text})
+                if cache_resp.status_code != 200:
+                    logging.warning(f"Failed to cache OCR text for fingerprint {fingerprint}")
+                return text
+            elif status == "failed":
+                logging.warning(f"OCR failed for {attachment['filename']}")
+                return ""
+        time.sleep(1)
+
+    logging.warning(f"OCR timed out for {attachment['filename']}")
+    # Optionally release claim here if task timed out, to allow retries later
+    return ""
+
+
 
 def get_email_body(msg: email.message.EmailMessage) -> str:
     """
@@ -210,7 +211,8 @@ def fetch_emails() -> list[dict]:
             body = get_email_body(msg)
 
             fingerprint = compute_fingerprint(subject, body)
-            if is_already_processing_or_processed(fingerprint):
+            claim_resp = requests.post(FASTAPI_REDIS_CLAIM_URL, json={"fingerprint": fingerprint})
+            if claim_resp.status_code != 200:
                 logging.info(f"Skipping already processed/processing email: {subject} ({fingerprint[:8]}...)")
                 continue
 
@@ -229,63 +231,63 @@ def fetch_emails() -> list[dict]:
     return emails
 
 def process_email(email_data: dict) -> None:
-    """
-    Process the email data by performing OCR on attachments and classifying the email content.
-    This function extracts the subject, body, and attachments from the email,
-    submits attachments for OCR processing, combines the results with the email body,
-    and sends the combined text to a FastAPI endpoint for classification.
-
-    Args:
-        email_data (dict): A dictionary containing email data including subject, date, body,
-                           attachments, and fingerprint.
-    """
     fingerprint = email_data["fingerprint"]
+    attachments = email_data.get("attachments", [])
+
     try:
         ocr_texts = []
-        if email_data["attachments"]:
-            with ThreadPoolExecutor(max_workers=3) as exec_:
-                futures = [exec_.submit(submit_ocr, att) for att in email_data["attachments"]]
-                for f in as_completed(futures):
-                    text = f.result()
-                    if text:
-                        ocr_texts.append(text)
 
-        combined_text = f"{email_data['subject']}\n{email_data['body']}\n\nAttachments OCR:\n" + "\n\n".join(ocr_texts)
+        # Run OCR in parallel if attachments exist
+        if attachments:
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                future_to_attachment = {
+                    executor.submit(submit_ocr, att): att for att in attachments
+                }
+                for future in as_completed(future_to_attachment):
+                    try:
+                        text = future.result()
+                        if text:
+                            ocr_texts.append(text)
+                    except Exception as e:
+                        logging.error(f"OCR failed for attachment: {e}")
+
+        # Combine once, classify once
+        combined_text = (
+            f"{email_data['subject']}\n{email_data['body']}\n\n"
+            "Attachments OCR:\n" + "\n\n".join(ocr_texts)
+        )
 
         resp = requests.post(FASTAPI_CLASSIFY_URL, json={
             "text": combined_text,
             "date": email_data["date"],
             "fingerprint": fingerprint,
         })
+
         if resp.ok:
-            logging.info(f"Classification success: {resp.json()}")
+            logging.info(f"Classification success for {fingerprint[:8]}...: {resp.json()}")
         else:
-            logging.error(f"Classification failed: {resp.text}")
-    except Exception as e:
+            logging.error(f"Classification failed: {resp.status_code} {resp.text}")
+
+    except Exception:
         logging.exception(f"Failed processing email {fingerprint[:8]}...")
+
     finally:
         remove_processing_mark(fingerprint)
 
 def main_loop() -> None:
-    """
-    Main loop for fetching and processing emails.
-    This function continuously checks for new emails every 10 seconds,
-    fetches them, and processes each email using a thread pool to handle OCR and classification concurrently.
-    Maximum number of concurrent threads is set to 5.
-    """
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        while True:
-            try:
-                new_emails = fetch_emails()
-                if new_emails:
-                    logging.info(f"Processing {len(new_emails)} new emails")
-                    for email_data in new_emails:
-                        executor.submit(process_email, email_data)
-                else:
-                    logging.debug("No new emails found")
-            except Exception:
-                logging.exception("Unhandled error in main loop")
-            time.sleep(10)
+    while True:
+        try:
+            new_emails = fetch_emails()
+            if new_emails:
+                logging.info(f"Processing {len(new_emails)} new emails")
+                for email_data in new_emails:
+                    process_email(email_data)
+            else:
+                logging.debug("No new emails found")
+        except Exception:
+            logging.exception("Unhandled error in main loop")
+        time.sleep(10)
+
 
 if __name__ == "__main__":
     main_loop()

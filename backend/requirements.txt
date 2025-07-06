@@ -11,3 +11,4 @@ imap-tools
 pillow
 python-multipart
 pymupdf
+langgraph

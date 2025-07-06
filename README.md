@@ -78,10 +78,8 @@ Once running, access the web interface at:
 - **GET /health/**
   Simple health check returning `{ "status": "ok" }`.
 
-- **POST /redis_check/**
+- **POST /redis_claim/**
   Checks if a fingerprint is in the Redis set (deduplication).
-
-- **POST /redis_publish/**
   Adds a fingerprint to Redis set; errors on duplicate (status 409).
 
 - **POST /ocr_document/**
