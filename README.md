@@ -1,24 +1,54 @@
 # Email to Real-Time Ledger (e2RTLedger)
 
-*Turn your finance emails into a real-time, automated ledger for your company.*
+*Turn your finance emails into a real-time, automated ledger for your company using advanced AI agents.*
 
-This project parses incoming finance-related emails—such as invoices, receipts, and payment notifications—and extracts key transaction details to automatically update a live financial ledger. Stay on top of your company's expenses, payments, and income without manual data entry.
+This AI engineering project parses incoming finance-related emails—such as invoices, receipts, and payment notifications—and extracts key transaction details to automatically update a live financial ledger. Stay on top of your company's expenses, payments, and income without manual data entry.
+
+## Software Architecture
+
+![Software Architecture Diagram](./images/Ryan_E2LEDGER_INFRASTRUCTURE.png)
+
+## AI Architecture
+
+This project leverages **LangGraph agentic AI** with a sophisticated multi-agent system designed for precision and accuracy:
+
+### Specialized AI Agents
+
+- **Entity Extractor Agent**: Intelligently extracts structured ledger entities from unstructured email content
+  - Vendor/merchant names
+  - Transaction types (payment, invoice, receipt)
+  - Transaction amounts and currencies
+  - Transaction dates and reference numbers
+  
+- **Categorizer Agent**: Automatically classifies transactions into business categories
+  - SaaS subscriptions and software licenses
+  - Office supplies and equipment
+  - Meals & Entertainment
+  - Transport and travel expenses
+  - Other miscellaneous business expenses
+
+### Few-Shot Learning Enhancement
+
+Both agents utilize **few-shot example prompting** to significantly enhance accuracy and precision. The system includes carefully curated examples that demonstrate proper entity extraction and categorization patterns, enabling the AI agents to better understand context and maintain consistency across diverse email formats and transaction types.
+
+The agents work collaboratively through LangGraph's orchestration framework, ensuring accurate data extraction and classification while maintaining consistency across the entire transaction processing pipeline.
 
 ## Features
 
-- Connects securely to your email inbox via IMAP
-- Parses and classifies finance emails automatically
-- Extracts transaction data (amounts, dates, vendors, categories)
-- Updates a real-time, searchable ledger database
-- Supports multi-currency and various invoice formats
-- Provides a web interface to view and manage transactions
+- **Secure Email Integration**: Connects securely to your email inbox via IMAP
+- **AI-Powered Processing**: LangGraph agentic system with specialized extraction and categorization agents
+- **Real-Time Updates**: Live ledger updates with WebSocket connections
+- **Multi-Currency Support**: Handles various currencies and invoice formats
+- **Interactive Dashboard**: Web interface to view and manage transactions
+- **Smart Classification**: Automatic transaction categorization using AI with few-shot learning
+- **OCR Processing**: Extract data from PDF invoices and image receipts
 
 ## Getting Started
 
 1. Clone the repository and navigate to the project directory:
    ```bash
-   git clone https://github.com/ryanrahmadifa/e2rtledger.git
-   cd e2rtledger
+   git clone https://github.com/ryanrahmadifa/e2RTLedger.git
+   cd e2RTLedger
    ```
 2. `docker compose up --build`
 
@@ -35,8 +65,8 @@ This project parses incoming finance-related emails—such as invoices, receipts
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/e2rtledger.git
-cd e2rtledger
+git clone https://github.com/your-username/e2RTLedger.git
+cd e2RTLedger
 docker compose up --build
 ```
 
@@ -112,10 +142,6 @@ Automatically classifies transactions into:
 - Office
 - Other
 
-## Architecture
-
-![Architecture Diagram](./images/Ryan_E2LEDGER_INFRASTRUCTURE.png)
-
 ## Development
 
 ### Docker Services
@@ -154,9 +180,9 @@ This POC is licensed under the MIT License - see the [LICENSE](LICENSE) file for
 
 ## Support
 
-- 📧 Email: mryanrahmadifa@gmail.com
-- 🐛 Issues: [GitHub Issues](https://github.com/ryanrahmadifa/e2rtledger/issues)
-- 📖 Documentation: [Wiki](https://github.com/ryanrahmadifa/e2rtledger/)
+- Email: mryanrahmadifa@gmail.com
+- Issues: [GitHub Issues](https://github.com/ryanrahmadifa/e2rtledger/issues)
+- Documentation: [Wiki](https://github.com/ryanrahmadifa/e2rtledger/)
 
 ## Roadmap
 
@@ -169,4 +195,4 @@ This POC is licensed under the MIT License - see the [LICENSE](LICENSE) file for
 
 ---
 
-**Made with ⚡ by Muhammad Ryanrahmadifa**
+**Made with precision by Muhammad Ryanrahmadifa**
