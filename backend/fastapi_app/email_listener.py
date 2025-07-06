@@ -228,62 +228,63 @@ def fetch_emails() -> list[dict]:
     return emails
 
 def process_email(email_data: dict) -> None:
-    fingerprint = email_data["fingerprint"]
-    attachments = email_data.get("attachments", [])
+    """
+    Process the email data by performing OCR on attachments and classifying the email content.
+    This function extracts the subject, body, and attachments from the email,
+    submits attachments for OCR processing, combines the results with the email body,
+    and sends the combined text to a FastAPI endpoint for classification.
 
+    Args:
+        email_data (dict): A dictionary containing email data including subject, date, body,
+                           attachments, and fingerprint.
+    """
+    fingerprint = email_data["fingerprint"]
     try:
         ocr_texts = []
+        if email_data["attachments"]:
+            with ThreadPoolExecutor(max_workers=3) as exec_:
+                futures = [exec_.submit(submit_ocr, att) for att in email_data["attachments"]]
+                for f in as_completed(futures):
+                    text = f.result()
+                    if text:
+                        ocr_texts.append(text)
 
-        # Run OCR in parallel if attachments exist
-        if attachments:
-            with ThreadPoolExecutor(max_workers=4) as executor:
-                future_to_attachment = {
-                    executor.submit(submit_ocr, att): att for att in attachments
-                }
-                for future in as_completed(future_to_attachment):
-                    try:
-                        text = future.result()
-                        if text:
-                            ocr_texts.append(text)
-                    except Exception as e:
-                        logging.error(f"OCR failed for attachment: {e}")
-
-        # Combine once, classify once
-        combined_text = (
-            f"{email_data['subject']}\n{email_data['body']}\n\n"
-            "Attachments OCR:\n" + "\n\n".join(ocr_texts)
-        )
+        combined_text = f"{email_data['subject']}\n{email_data['body']}\n\nAttachments OCR:\n" + "\n\n".join(ocr_texts)
 
         resp = requests.post(FASTAPI_CLASSIFY_URL, json={
             "text": combined_text,
             "date": email_data["date"],
             "fingerprint": fingerprint,
         })
-
         if resp.ok:
-            logging.info(f"Classification success for {fingerprint[:8]}...: {resp.json()}")
+            logging.info(f"Classification success: {resp.json()}")
         else:
-            logging.error(f"Classification failed: {resp.status_code} {resp.text}")
-
-    except Exception:
+            logging.error(f"Classification failed: {resp.text}")
+    except Exception as e:
         logging.exception(f"Failed processing email {fingerprint[:8]}...")
-
     finally:
         remove_processing_mark(fingerprint)
 
 def main_loop() -> None:
-    while True:
-        try:
-            new_emails = fetch_emails()
-            if new_emails:
-                logging.info(f"Processing {len(new_emails)} new emails")
-                for email_data in new_emails:
-                    process_email(email_data)
-            else:
-                logging.debug("No new emails found")
-        except Exception:
-            logging.exception("Unhandled error in main loop")
-        time.sleep(10)
+    """
+    Main loop for fetching and processing emails.
+    This function continuously checks for new emails every 10 seconds,
+    fetches them, and processes each email using a thread pool to handle OCR and classification concurrently.
+    Maximum number of concurrent threads is set to 5.
+    """
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        while True:
+            try:
+                new_emails = fetch_emails()
+                if new_emails:
+                    logging.info(f"Processing {len(new_emails)} new emails")
+                    for email_data in new_emails:
+                        executor.submit(process_email, email_data)
+                else:
+                    logging.debug("No new emails found")
+            except Exception:
+                logging.exception("Unhandled error in main loop")
+            time.sleep(10)
 
 
 if __name__ == "__main__":
