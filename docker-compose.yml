@@ -4,18 +4,6 @@ services:
     ports:
       - "6379:6379"
 
-
-  postgres:
-    image: postgres:15
-    environment:
-      POSTGRES_USER: ledger
-      POSTGRES_PASSWORD: ledgerpw
-      POSTGRES_DB: ledgerdb
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-
   fastapi:
     build: ./backend
     ports:
@@ -24,7 +12,6 @@ services:
       - .env
     depends_on:
       - redis
-      - postgres
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
       interval: 5s
@@ -60,5 +47,5 @@ services:
       fastapi:
         condition: service_healthy
 
-volumes:
-  pgdata:
+# volumes:
+#   # pgdata:

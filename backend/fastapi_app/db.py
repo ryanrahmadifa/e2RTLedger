@@ -2,13 +2,15 @@ from sqlalchemy import create_engine, Column, Integer, String, Text, Float, Date
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import insert
 import os
 import logging
 
-# Setup logging
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://ledger:ledgerpw@localhost:5432/ledgerdb")
-engine = create_engine(DATABASE_URL)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -42,56 +44,79 @@ class LedgerEntry(Base):
     fingerprint = Column(String, nullable=False, index=True, unique=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-Base.metadata.create_all(bind=engine)
-
-def save_entry(data):
-    """
-    Save a new ledger entry to the database.
-
-    Args:
-        data (dict): A dictionary containing the entry details. Must include:
-            - text (str): Description of the transaction.
-            - date (str): Date of the transaction in YYYY-MM-DD format.
-            - amount (float): Amount of the transaction.
-            - currency (str): Currency of the transaction (e.g., USD, SGD).
-            - vendor (str): Name of the vendor or party involved in the transaction.
-            - ttype (str): Type of transaction, either "Debit" or "Credit".
-            - referenceid (str): Unique reference ID for the transaction.
-            - label (str): Category of the transaction (e.g., Meals & Entertainment, Transport).
-            - fingerprint (str): Unique fingerprint for the entry, used to prevent duplicates.
-    """
+def save_entry(data: dict):
     db = SessionLocal()
     try:
-        logging.info("Attempting to save entry: %s", data)
+        stmt = insert(LedgerEntry).values(**data)
+        update_dict = data.copy()
+        del update_dict["fingerprint"]  # Don't update fingerprint
 
-        # Print all existing rows
-        existing_rows = db.query(LedgerEntry).all()
-        logging.info("Current rows in DB (%d):", len(existing_rows))
-        for row in existing_rows:
-            logging.info("Row ID %s | Fingerprint: %s | Vendor: %s | Amount: %.2f | Date: %s",
-                        row.id, row.fingerprint, row.vendor, row.amount, row.date)
-
-        # Attempt to insert
-        entry = LedgerEntry(
-            text=data["text"],
-            date=data["date"],
-            amount=data["amount"],
-            currency=data["currency"],
-            vendor=data["vendor"],
-            ttype=data["ttype"],
-            referenceid=data["referenceid"],
-            label=data["label"],
-            fingerprint=data["fingerprint"]
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["fingerprint"],  # Unique constraint
+            set_=update_dict
         )
-        db.add(entry)
+
+        db.execute(stmt)
         db.commit()
-        logging.info("Entry committed successfully.")
-    except IntegrityError:
+        logging.info("Entry upserted (inserted or updated) successfully.")
+    except Exception:
         db.rollback()
-        logging.warning("Duplicate fingerprint detected — skipping entry: %s", data["fingerprint"])
-    except Exception as e:
-        db.rollback()
-        logging.exception("Failed to save entry due to exception.")
+        logging.exception("Failed to upsert entry")
         raise
     finally:
         db.close()
+
+
+# Base.metadata.create_all(bind=engine)
+
+# def save_entry(data):
+#     """
+#     Save a new ledger entry to the database.
+
+#     Args:
+#         data (dict): A dictionary containing the entry details. Must include:
+#             - text (str): Description of the transaction.
+#             - date (str): Date of the transaction in YYYY-MM-DD format.
+#             - amount (float): Amount of the transaction.
+#             - currency (str): Currency of the transaction (e.g., USD, SGD).
+#             - vendor (str): Name of the vendor or party involved in the transaction.
+#             - ttype (str): Type of transaction, either "Debit" or "Credit".
+#             - referenceid (str): Unique reference ID for the transaction.
+#             - label (str): Category of the transaction (e.g., Meals & Entertainment, Transport).
+#             - fingerprint (str): Unique fingerprint for the entry, used to prevent duplicates.
+#     """
+#     db = SessionLocal()
+#     try:
+#         logging.info("Attempting to save entry: %s", data)
+
+#         # Print all existing rows
+#         existing_rows = db.query(LedgerEntry).all()
+#         logging.info("Current rows in DB (%d):", len(existing_rows))
+#         for row in existing_rows:
+#             logging.info("Row ID %s | Fingerprint: %s | Vendor: %s | Amount: %.2f | Date: %s",
+#                         row.id, row.fingerprint, row.vendor, row.amount, row.date)
+
+#         # Attempt to insert
+#         entry = LedgerEntry(
+#             text=data["text"],
+#             date=data["date"],
+#             amount=data["amount"],
+#             currency=data["currency"],
+#             vendor=data["vendor"],
+#             ttype=data["ttype"],
+#             referenceid=data["referenceid"],
+#             label=data["label"],
+#             fingerprint=data["fingerprint"]
+#         )
+#         db.add(entry)
+#         db.commit()
+#         logging.info("Entry committed successfully.")
+#     except IntegrityError:
+#         db.rollback()
+#         logging.warning("Duplicate fingerprint detected — skipping entry: %s", data["fingerprint"])
+#     except Exception as e:
+#         db.rollback()
+#         logging.exception("Failed to save entry due to exception.")
+#         raise
+#     finally:
+#         db.close()

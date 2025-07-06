@@ -22,4 +22,4 @@ RUN chmod +x wait-for-it.sh
 
 ENV PYTHONPATH=/app
 
-CMD ["./wait-for-it.sh", "postgres:5432", "--", "uvicorn", "fastapi_app.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "debug"]
+CMD ["uvicorn", "fastapi_app.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "debug"]
