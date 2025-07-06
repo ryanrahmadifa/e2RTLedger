@@ -8,7 +8,7 @@ import requests
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL_NAME = "anthropic/claude-3.5-haiku"
+MODEL_NAME = "google/gemini-2.5-flash-preview-05-20"
 
 
 def extract_json_from_text(text):

@@ -85,17 +85,21 @@ export default function LedgerTable() {
       return 0;
     });
 
-  const formatAmount = (amount: number, currency: string) => {
+  const formatAmount = (amount: number) => {
     const safeAmount = typeof amount === "number" && !isNaN(amount) ? amount : 0;
-    const safeCurrency = /^[A-Z]{3}$/.test(currency || "") ? currency : "USD";
-
+    
     const formattedNumber = new Intl.NumberFormat('en-US', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     }).format(safeAmount);
 
-    return `${safeCurrency} ${formattedNumber}`;
+    return `${formattedNumber}`;
   };
+
+  const formatCurrency = (currency: string) => {
+    const safeCurrency = /^[A-Z]{3}$/.test(currency || "") ? currency : "USD";
+    return safeCurrency.toUpperCase();
+  }
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -224,6 +228,7 @@ export default function LedgerTable() {
                   <tr>
                     <th className="text-left py-4 px-6 font-semibold text-gray-900">Date</th>
                     <th className="text-left py-4 px-6 font-semibold text-gray-900">Vendor</th>
+                    <th className="text-right py-4 px-6 font-semibold text-gray-900">Currency</th>
                     <th className="text-right py-4 px-6 font-semibold text-gray-900">Amount</th>
                     <th className="text-left py-4 px-6 font-semibold text-gray-900">Category</th>
                     <th className="text-left py-4 px-6 font-semibold text-gray-900">Type</th>
@@ -242,7 +247,12 @@ export default function LedgerTable() {
                       </td>
                       <td className="py-4 px-6 text-right">
                         <span className="font-semibold text-gray-900 text-lg">
-                          {formatAmount(entry.amount, entry.currency)}
+                          {formatCurrency(entry.currency)} 
+                        </span>
+                      </td>
+                      <td className="py-4 px-6 text-right">
+                        <span className="font-semibold text-gray-900 text-lg">
+                          {formatAmount(entry.amount)}
                         </span>
                       </td>
                       <td className="py-4 px-6">
@@ -284,7 +294,7 @@ export default function LedgerTable() {
                 <div className="space-y-1">
                   {Object.entries(totalPerCurrency).map(([currency, total]) => (
                     <div key={currency} className="text-lg font-bold text-gray-900">
-                      {formatAmount(total as number, currency)}
+                      {formatCurrency(currency)} {formatAmount(total as number)}
                     </div>
                   ))}
                 </div>
