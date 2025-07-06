@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from fastapi_app.redis_publisher import RedisLogHandler
 
-IMAP_SERVER = "imap.gmail.com"
+IMAP_SERVER = os.getenv("IMAP_SERVER")
 EMAIL_ACCOUNT = os.getenv("EMAIL_ACCOUNT")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 
@@ -56,9 +56,9 @@ def decode_str(s) -> str:
 def normalize_text(text: str) -> str:
     if not text:
         return ""
-    text = text.strip().lower()  # lowercase and trim
-    text = unicodedata.normalize("NFC", text)  # normalize unicode
-    text = re.sub(r"\s+", " ", text)  # collapse all whitespace runs to single space
+    text = text.strip().lower()
+    text = unicodedata.normalize("NFC", text)
+    text = re.sub(r"\s+", " ", text)
     return text
 
 def compute_fingerprint(*args) -> str:
@@ -129,7 +129,6 @@ def submit_ocr(attachment: dict) -> str:
     submit_resp = requests.post(FASTAPI_OCR_SUBMIT_URL, files=files)
     if not submit_resp.ok:
         logging.warning(f"OCR submission failed for {attachment['filename']}: {submit_resp.text}")
-        # Release claim? (Optional depending on your Redis logic)
         return ""
 
     task_id = submit_resp.json().get("task_id")
@@ -141,7 +140,6 @@ def submit_ocr(attachment: dict) -> str:
             status = result_resp.json().get("status")
             if status == "completed":
                 text = result_resp.json().get("text", "")
-                # Cache the OCR result in Redis so others don't reprocess
                 cache_resp = requests.post(FASTAPI_REDIS_CACHE_URL, json={"fingerprint": fingerprint, "text": text})
                 if cache_resp.status_code != 200:
                     logging.warning(f"Failed to cache OCR text for fingerprint {fingerprint}")
@@ -152,7 +150,6 @@ def submit_ocr(attachment: dict) -> str:
         time.sleep(1)
 
     logging.warning(f"OCR timed out for {attachment['filename']}")
-    # Optionally release claim here if task timed out, to allow retries later
     return ""
 
 

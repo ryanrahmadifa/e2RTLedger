@@ -18,7 +18,6 @@ def publish_entry_once(data):
 
     redis_key = f"published:{fingerprint}"
 
-    # Set only if not exists (NX) — expire in 1 hour (or longer if needed)
     if redis_conn.set(redis_key, "1", nx=True, ex=3600):
         redis_conn.publish("ledger_updates", json.dumps(data))
         logging.info(f"Published new ledger update for {fingerprint[:8]}")

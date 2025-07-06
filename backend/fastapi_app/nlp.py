@@ -8,7 +8,7 @@ import requests
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL_NAME = "openai/gpt-4.1-mini"
+MODEL_NAME = "anthropic/claude-3.5-haiku"
 
 
 def extract_json_from_text(text):
@@ -96,22 +96,43 @@ def entity_extractor_node(state: TransactionState) -> TransactionState:
     input_text = state["input_text"]
     
     system_prompt = f"""
-You are an intelligent financial data extraction assistant.
-
-Given the following raw text from an email and OCR-processed attachments, extract the following fields accurately as JSON:
-
-- "text": a short description of the transaction
-- "date": transaction date in YYYY-MM-DD format (Use the email date {state["date"] if state["date"] else "None"} if missing)
-- "amount": transaction amount as a float (0.00 if missing)
-- "currency": 3-letter ISO currency code (e.g., USD, SGD, if missing, use "None")
-- "vendor": merchant or party involved for transaction with EARLYBIRD AI PTE LTD (if missing, use "None")
-- "ttype": "Debit" or "Credit" from the perspective of EARLYBIRD AI PTE LTD (if missing, use "None")
-- "referenceid": string of unique transaction or invoice identifier (if missing, use "None")
-
-IMPORTANT: Return ONLY the JSON object without any explanation, formatting, or additional text. Do not include any markdown formatting or explanatory text.
-"""
+    You are an intelligent financial data extraction assistant. You are skilled in extracting structured financial 
+    transaction data from unstructured text, such as emails or OCR-processed documents.
+    """
 
     user_prompt = f"""
+    Given the following raw text from an email and OCR-processed attachments, extract the following fields accurately as JSON:
+
+    - "text": a short description of the transaction
+    - "date": transaction date in YYYY-MM-DD format (Use the email date {state["date"] if state["date"] else "None"} if missing)
+    - "amount": transaction amount as a float (0.00 if missing)
+    - "currency": 3-letter ISO currency code (e.g., USD, SGD, if missing, use "None")
+    - "vendor": merchant or party involved for transaction with EARLYBIRD AI PTE LTD (if missing, use "None")
+    - "ttype": "Debit" or "Credit" from EARLYBIRD AI PTE LTD's perspective:
+    * "Debit" = Money going OUT of EARLYBIRD AI PTE LTD (expenses, payments made, purchases)
+    * "Credit" = Money coming INTO EARLYBIRD AI PTE LTD (income, payments received, refunds)
+    - "referenceid": string of unique transaction or invoice identifier (if missing, use "None")
+
+    EXAMPLES:
+
+    Example 1 - Invoice received (money going out):
+    Raw text: "Invoice #INV-2024-001 from Office Supplies Co. for 250.00 EUR dated 2024-03-15. Payment due for office equipment purchase."
+    JSON: {{"text": "Office equipment purchase", "date": "2024-03-15", "amount": 250.00, "currency": "EUR", "vendor": "Office Supplies Co.", "ttype": "Debit", "referenceid": "INV-2024-001"}}
+
+    Example 2 - Payment received (money coming in):
+    Raw text: "Payment received from Client ABC to EARLYBIRD AI PTE LTD. for services rendered. Amount: SGD 1,500.00. Reference: PAY-2024-445. Date: 2024-03-20"
+    JSON: {{"text": "Payment received for services", "date": "2024-03-20", "amount": 1500.00, "currency": "SGD", "vendor": "Client ABC", "ttype": "Credit", "referenceid": "PAY-2024-445"}}
+
+    Example 3 - Refund received (money coming in):
+    Raw text: "Refund processed by Software Provider Ltd. to EARLYBIRD AI PTE LTD. Amount: USD 89.99. Refund ID: REF-789. Date: 2024-03-18"
+    JSON: {{"text": "Refund from software provider", "date": "2024-03-18", "amount": 89.99, "currency": "USD", "vendor": "Software Provider Ltd.", "ttype": "Credit", "referenceid": "REF-789"}}
+
+    Example 4 - Expense payment (money going out):
+    Raw text: "Monthly subscription fee charged by Cloud Services Inc. $45.00 USD. Transaction ID: TXN-456789. Date: 2024-03-25"
+    JSON: {{"text": "Monthly subscription fee", "date": "2024-03-25", "amount": 45.00, "currency": "USD", "vendor": "Cloud Services Inc.", "ttype": "Debit", "referenceid": "TXN-456789"}}
+
+    IMPORTANT: Return ONLY the JSON object without any explanation, formatting, or additional text. Do not include any markdown formatting or explanatory text.
+
     Raw text from email and OCR attachments:
     \"\"\"
     {input_text}
@@ -162,24 +183,78 @@ def categorizer_node(state: TransactionState) -> TransactionState:
     input_text = state["input_text"]
     
     system_prompt = f"""
-You are an expert financial transaction categorization assistant.
+    You are an expert financial transaction categorization assistant.
+    You are skilled in classifying transactions into predefined categories based on the extracted data.
+    """
+    
+    user_prompt = f"""# Expense Classification Prompt
 
-Given the transaction description, vendor name, and other context, classify the transaction into one of these categories:
+        You are an expert expense categorization assistant. Your task is to classify transaction data into one of the following categories based on the description, merchant, and amount:
 
-- Meals & Entertainment
-- Transport
-- SaaS
-- Travel
-- Office
-- Other
+        ## Categories:
+        - **Meals & Entertainment**: Restaurants, bars, catering, team meals, client dinners, entertainment venues
+        - **Transport**: Uber, taxi, gas, parking, public transit, car rentals, vehicle maintenance
+        - **SaaS**: Software subscriptions, cloud services, online tools, digital platforms
+        - **Travel**: Hotels, flights, airfare, accommodation, travel booking sites
+        - **Office**: Office supplies, equipment, furniture, utilities, rent, phone bills
+        - **Other**: Any expense that doesn't clearly fit the above categories
 
-IMPORTANT: Return ONLY a JSON object with a "label" field containing one of the categories above. Do not include any explanation, formatting, or additional text.
+        ## Instructions:
+        1. Analyze the transaction description, merchant name, and amount
+        2. Consider the business context and typical expense patterns
+        3. Choose the most appropriate category
+        4. Return only a JSON object with a "label" field
 
-JSON:"""
+        ## Examples:
+
+        **Input:** "UBER TRIP - SAN FRANCISCO, $23.45"
+        **Output:** {{"label": "Transport"}}
+
+        **Input:** "STARBUCKS COFFEE - DOWNTOWN, $8.99"
+        **Output:** {{"label": "Meals & Entertainment"}}
+
+        **Input:** "ADOBE CREATIVE CLOUD SUBSCRIPTION, $52.99"
+        **Output:** {{"label": "SaaS"}}
+
+        **Input:** "MARRIOTT HOTEL - CHICAGO, $189.00"
+        **Output:** {{"label": "Travel"}}
+
+        **Input:** "STAPLES OFFICE SUPPLIES, $45.67"
+        **Output:** {{"label": "Office"}}
+
+        **Input:** "AMAZON WEB SERVICES, $127.83"
+        **Output:** {{"label": "SaaS"}}
+
+        **Input:** "SHELL GAS STATION, $65.22"
+        **Output:** {{"label": "Transport"}}
+
+        **Input:** "BLUE BOTTLE COFFEE - CLIENT MEETING, $34.50"
+        **Output:** {{"label": "Meals & Entertainment"}}
+
+        **Input:** "UNITED AIRLINES - FLIGHT TO NYC, $456.00"
+        **Output:** {{"label": "Travel"}}
+
+        **Input:** "VERIZON BUSINESS - OFFICE PHONE, $89.99"
+        **Output:** {{"label": "Office"}}
+
+        **Input:** "MICROSOFT OFFICE 365, $15.00"
+        **Output:** {{"label": "SaaS"}}
+
+        **Input:** "WALMART - MISCELLANEOUS ITEMS, $23.45"
+        **Output:** {{"label": "Other"}}
+
+        ## Task:
+        Classify the following transaction data:
+
+        ```
+        {input_text}
+        ```
+
+        Return only a JSON object with a "label" field containing the category."""
 
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": "{\"text\": \"" + input_data.get("text", "") + "\"}"}
+        {"role": "user", "content": user_prompt}
     ]
 
     try:

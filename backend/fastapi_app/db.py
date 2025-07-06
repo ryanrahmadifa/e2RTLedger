@@ -66,6 +66,7 @@ def save_entry(data: dict):
     finally:
         db.close()
 
+# IF local DB
 
 # Base.metadata.create_all(bind=engine)
 
